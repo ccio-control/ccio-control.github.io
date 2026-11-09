@@ -357,7 +357,7 @@ const SUPABASE_KEY = "sb_publishable_KHGJNfT17DqkebBZtkkWLQ_KM-SdBPB";
       </div>
     </div>
     <div class="card" style="margin-top:14px" id="cardUsers" hidden>
-      <div class="hd"><h3>Usuarios y permisos</h3><div class="spacer"></div><span class="muted" style="font-size:12px">Todo correo @trafigura.com entra como Supervisor (solo ver). Agrega aquí a quienes registran (Digitador) o administran.</span></div>
+      <div class="hd"><h3>Usuarios y permisos</h3><div class="spacer"></div><span class="muted" style="font-size:12px">Crea primero la cuenta en Supabase (Authentication → Users → Add user, con «Auto Confirm User») y luego asígnale aquí su rol.</span></div>
       <div class="bd">
         <div class="row" style="max-width:640px"><div class="field"><label for="uEmail">Correo</label><input id="uEmail" placeholder="nombre.apellido@trafigura.com"></div>
           <div class="field" style="flex:0 0 150px"><label for="uRol">Rol</label><select id="uRol"><option value="supervisor">Supervisor (ver)</option><option value="digitador">Digitador (registrar)</option><option value="admin">Admin</option></select></div>
@@ -671,7 +671,7 @@ function renderRole(){
   const p=$("#pRol");$("#cardUsers").hidden=$("#cardImport").hidden=!S.canEdit;
   if(S.canEdit)p.innerHTML=`<span class="dot ok"></span>Admin · registra`;
   else if(S.canWrite)p.innerHTML=`<span class="dot ok"></span>Centro de control · registra`;
-  else p.innerHTML=`<span class="dot"></span>Supervisión · solo lectura`;
+  else p.innerHTML=`<span class="dot"></span>${S.visor?"Visualización":"Supervisión"} · solo lectura`;
 }
 function renderSync(state){const p=$("#pSync");
   const m={ok:["ok","En vivo"],wait:["warn","Conectando"],stale:["warn","Sin conexión: datos pueden estar desactualizados"],local:["crit","Sin conexión a la base de datos"]}[state];
@@ -732,7 +732,7 @@ function renderLegend(){$("#legend").innerHTML=Object.entries(GSHORT).map(([g,n]
 function renderGantt(){
   const k=keyOf(S.fecha,S.turno),t=getTurno(k),live=isLive(),no=nowOff();
   const pct=m=>(100*m/SHIFT_LEN).toFixed(3)+"%";
-  let h=`<div class="g-axis"><div style="padding:6px 8px;font-size:11px;color:var(--muted);font-weight:700">EQUIPO / OPERADOR</div><div class="ticks">`;
+  let h=`<div class="g-axis"><div style="padding:6px 8px;font-size:11px;color:var(--muted);font-weight:700">${S.visor?"EQUIPO":"EQUIPO / OPERADOR"}</div><div class="ticks">`;
   for(let m=0;m<SHIFT_LEN;m+=30)h+=`<div class="tick${m%60?" half":""}" style="left:${pct(m)}">${offToClock(m,S.turno)}</div>`;
   h+=`</div></div>`;
   const eqs=allEquipos().filter(e=>!S.fam||e.fam===S.fam);
@@ -745,7 +745,7 @@ function renderGantt(){
       const al=alertFor(e.eq,last,e.fam);
       let state="Sin registro";if(last){state=`${last.c} · ${last.l||"—"}`}
       const tagTxt=al?({over:'<span class="tag crit">excede estándar</span>',hist:'<span class="tag crit">demora larga</span>',falla:'<span class="tag crit">falla</span>',soon:'<span class="tag warn">por terminar</span>'})[al.kind]:"";
-      h+=`<div class="g-row${S.sel===e.eq?" sel":""}" data-eq="${esc(e.eq)}"><div class="g-name" tabindex="0" role="button" aria-label="Abrir ${esc(e.eq)}"><b>${esc(e.eq)} ${tagTxt}</b><small>${esc((d&&d.op)||"Sin operador")} · ${esc(state)}</small></div><div class="g-track">${grid}`;
+      h+=`<div class="g-row${S.sel===e.eq?" sel":""}" data-eq="${esc(e.eq)}"><div class="g-name" tabindex="0" role="button" aria-label="Abrir ${esc(e.eq)}"><b>${esc(e.eq)} ${tagTxt}</b><small>${S.visor?"":esc((d&&d.op)||"Sin operador")+" · "}${esc(state)}</small></div><div class="g-track">${grid}`;
       let prevL=null;
       if(last&&isOngoing(last)&&live){const sd=stdFor(e.eq,e.fam,last.c);if(sd)h+=`<div class="ghost" style="left:${pct(last.i)};width:${pct(Math.min(sd,SHIFT_LEN-last.i))}" title="Estándar ${fmtDur(sd)}"></div>`}
       segs.forEach((s,ix)=>{let end=segEnd(s,live,no);if(end<=s.i&&s.f!=null)return;const fut=live&&s.i>no;if(live&&!fut)end=Math.min(end,Math.max(no,s.i));
@@ -1178,7 +1178,7 @@ function fire(l){try{if(l.id==null){const docs=[];for(const [k,v] of Cloud.cache
 function emit(col){for(const l of Cloud.listeners)if(l.col===col)fire(l)}
 function loadCol(col){if(Cloud.loaded.has(col))return Promise.resolve();if(Cloud.loading[col])return Cloud.loading[col];
   Cloud.loading[col]=(async()=>{let from=0;const step=500;const fresh=new Map();
-    for(;;){const {data,error}=await Cloud.sb.from("docs").select("id,data").eq("col",col).range(from,from+step-1);if(error)throw mapErr(error);
+    for(;;){const {data,error}=await Cloud.sb.from(Cloud.tabla||"docs").select("id,data").eq("col",col).range(from,from+step-1);if(error)throw mapErr(error);
       for(const r of data)fresh.set(r.id,r.data);if(data.length<step)break;from+=step}
     for(const k of [...Cloud.cache.keys()])if(k.startsWith(col+"/"))Cloud.cache.delete(k);
     for(const [id,d] of fresh)Cloud.cache.set(ck(col,id),d);Cloud.loaded.add(col);delete Cloud.loading[col]})();
@@ -1203,38 +1203,40 @@ function startRealtime(){
 }
 function descargar(name,txt,type){const b=new Blob(["﻿".repeat(0)+txt],{type});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500)}
 
-/* ========== inicio de sesión (sin contraseña: enlace o código al correo) ========== */
+/* ========== inicio de sesión: visores con correo (sin verificación), editor con contraseña ========== */
 const DOMINIO="trafigura.com";
-function showLogin(modo,msg,email){const box=$("#login"),c=$("#loginCard");box.hidden=false;const m=msg||"";
+function showLogin(modo,msg){const box=$("#login"),c=$("#loginCard");box.hidden=false;const m=msg||"";
   const pie=`<div class="login-msg" id="lMsg">${esc(m)}</div>`;
   if(modo==="setup")c.innerHTML=`<h2>Falta configurar</h2><p>Abre <b>index.html</b> y pega en las primeras líneas la <b>Project URL</b> y la <b>publishable key</b> de tu proyecto Supabase.</p>`;
-  else if(modo==="pendiente")c.innerHTML=`<h2>Sin acceso</h2><p>Ingresaste como <b>${esc(S.email||"")}</b>. Solo pueden entrar correos <b>@${DOMINIO}</b> o los autorizados por el centro de control.</p><button class="btn" id="lOut">Salir</button>`;
-  else if(modo==="codigo")c.innerHTML=`<h2>Revisa tu correo</h2><p>Enviamos un mensaje a <b>${esc(email)}</b>. Abre el enlace del correo <b>o</b> escribe aquí el código de 6 dígitos.</p>
-    <div class="field"><label for="lCode">Código</label><input id="lCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10"></div>
-    <button class="btn primary" id="lGo">Entrar</button>${pie}<div class="links"><a id="lToEntrar">Usar otro correo</a><a id="lReenviar">Reenviar</a></div>`;
-  else c.innerHTML=`<h2>Centro de Control · Línea de Tiempo</h2><p>Escribe tu correo <b>@${DOMINIO}</b>. Te llegará un enlace para entrar, sin contraseña. Solo se pide una vez por computadora.</p>
-    <div class="field"><label for="lEmail">Correo</label><input id="lEmail" type="email" autocomplete="username" placeholder="nombre.apellido@${DOMINIO}"></div>
-    <button class="btn primary" id="lGo">Enviarme el enlace</button>${pie}`;
+  else if(modo==="pendiente")c.innerHTML=`<h2>Sin acceso</h2><p>La cuenta <b>${esc(S.email||"")}</b> no tiene rol de editor.</p><button class="btn" id="lOut">Salir</button>`;
+  else if(modo==="editor")c.innerHTML=`<h2>Ingreso del editor</h2><p>Solo para el centro de control.</p>
+    <div class="field"><label for="lEmail">Usuario (correo)</label><input id="lEmail" type="email" autocomplete="username"></div>
+    <div class="field"><label for="lPass">Contraseña</label><input id="lPass" type="password" autocomplete="current-password"></div>
+    <button class="btn primary" id="lGo">Ingresar</button>${pie}<div class="links"><a id="lToEntrar">Volver</a></div>`;
+  else c.innerHTML=`<h2>Centro de Control · Línea de Tiempo</h2><p>Escribe tu correo <b>@${DOMINIO}</b> para ver la línea de tiempo.</p>
+    <div class="field"><label for="lEmail">Correo</label><input id="lEmail" type="email" autocomplete="email" placeholder="nombre.apellido@${DOMINIO}"></div>
+    <button class="btn primary" id="lGo">Ingresar</button>${pie}<div class="links"><span></span><a id="lToEditor">Ingreso del editor</a></div>`;
   const msgEl=(t,err)=>{const e=$("#lMsg");if(e){e.textContent=t;e.className="login-msg"+(err?" err":"")}};
   $("#lToEntrar")&&($("#lToEntrar").onclick=()=>showLogin("entrar"));
+  $("#lToEditor")&&($("#lToEditor").onclick=()=>showLogin("editor"));
   $("#lOut")&&($("#lOut").onclick=()=>Cloud.sb.auth.signOut().then(()=>location.reload()));
-  const enviar=async mail=>{const {error}=await Cloud.sb.auth.signInWithOtp({email:mail,options:{emailRedirectTo:location.origin+location.pathname,shouldCreateUser:true}});if(error)throw error};
-  $("#lReenviar")&&($("#lReenviar").onclick=async()=>{try{await enviar(email);msgEl("Correo reenviado.")}catch(e){msgEl(errTxt(e),true)}});
   const go=$("#lGo");if(!go)return;
   c.querySelectorAll("input").forEach(i=>i.addEventListener("keydown",e=>{if(e.key==="Enter")go.click()}));
   (c.querySelector("input")||{}).focus?.();
-  go.onclick=async()=>{go.disabled=true;msgEl("Un momento…");
-    try{if(modo==="codigo"){const token=($("#lCode").value||"").replace(/\D/g,"");if(token.length<6)throw new Error("Escribe el código completo.");
-          const {error}=await Cloud.sb.auth.verifyOtp({email,token,type:"email"});if(error)throw error}
-        else{const mail=($("#lEmail").value||"").trim().toLowerCase();
-          if(!mail.endsWith("@"+DOMINIO))throw new Error(`Usa tu correo @${DOMINIO}.`);
-          await enviar(mail);showLogin("codigo","",mail);return}}
-    catch(e){msgEl(errTxt(e),true)}
+  go.onclick=async()=>{const email=($("#lEmail").value||"").trim().toLowerCase();go.disabled=true;
+    try{if(modo==="editor"){msgEl("Un momento…");const {error}=await Cloud.sb.auth.signInWithPassword({email,password:$("#lPass").value||""});if(error)throw error}
+        else{if(!/^[^@\s]+@trafigura\.com$/.test(email))throw new Error(`Usa tu correo @${DOMINIO}.`);
+          try{localStorage.setItem("cc_visor",email)}catch(e){}
+          entrarVisor(email)}}
+    catch(e){const t=e&&e.message||String(e);msgEl(/invalid login|invalid credentials/i.test(t)?"Usuario o contraseña incorrectos.":/rate limit|too many/i.test(t)?"Demasiados intentos. Espera unos minutos.":t,true)}
     go.disabled=false}}
-function errTxt(e){const t=e&&e.message||String(e);
-  if(/rate limit|too many|security purposes/i.test(t))return"Se pidieron muchos correos seguidos. Espera unos minutos y vuelve a intentar.";
-  if(/expired|invalid/i.test(t))return"El código no es válido o ya venció. Pide uno nuevo con «Reenviar».";
-  return t}
+function entrarVisor(email){
+  if(S.entrando)return;S.entrando=true;S.visor=true;S.email=email;S.uid=null;
+  const ub=$("#userBox");ub.hidden=false;ub.innerHTML=`${esc(email)}<button id="bSalir" title="Salir">Salir</button>`;
+  $("#bSalir").onclick=()=>{try{localStorage.removeItem("cc_visor")}catch(e){};location.reload()};
+  $("#login").hidden=true;S.rol="visor";S.canWrite=false;S.canEdit=false;Cloud.tabla="docs_publico";
+  cargarDatos(false);
+}
 async function entrar(session){
   if(S.entrando)return;S.entrando=true;
   S.uid=session.user.id;S.email=(session.user.email||"").toLowerCase();
@@ -1244,12 +1246,16 @@ async function entrar(session){
   if(eRol||!rol){showLogin("pendiente");return}
   $("#login").hidden=true;
   S.rol=rol;S.canWrite=S.rol!=="supervisor";S.canEdit=S.rol==="admin";
+  try{localStorage.removeItem("cc_visor")}catch(e){}
+  cargarDatos(true);
+}
+async function cargarDatos(realtime){
   const db=makeDb();S.db=db;renderRole();renderSync("wait");
-  const {data:b}=await Cloud.sb.from("docs").select("data").eq("col","base").eq("id","catalogo").maybeSingle();
+  const {data:b}=await Cloud.sb.from(Cloud.tabla||"docs").select("data").eq("col","base").eq("id","catalogo").maybeSingle();
   if(b&&b.data){S.cat=b.data.catalogo||S.cat;S.stats=b.data.stats||S.stats}
   else $("#bannerArea").innerHTML=`<div class="banner warn">${S.canEdit?"Aún no se cargó el catálogo de equipos y códigos. Ve a <b>Estándares y guardias → Importar datos</b> y carga <b>historial.json</b>.":"El administrador aún no cargó el catálogo de equipos y códigos."}</div>`;
   fillFamilies();fillDatalists();buildProfile();renderAll();
-  startRealtime();
+  if(realtime)startRealtime();else{renderSync("ok");setInterval(resync,60*1000);document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")resync()})}
   let loaded=false;const timer=setTimeout(()=>{if(!loaded)renderSync("stale")},10000);
   db.collection("turnos").onSnapshot(snap=>{const o={};for(const d of snap.docs)o[d.id]=d.data();S.dbT=o;
     loaded=true;clearTimeout(timer);fillDatalists();afterData()},err=>{clearTimeout(timer);renderSync("stale")});
@@ -1266,7 +1272,7 @@ async function renderUsuarios(){if(!Cloud.sb||!S.canEdit)return;const a=document
   const roles=[["supervisor","Supervisor (ver)"],["digitador","Digitador (registrar)"],["admin","Admin"]];
   $("#uTable").innerHTML=`<tr><th>Correo</th><th>Rol</th><th></th></tr>`+data.map(u=>`<tr><td>${esc(u.email)}</td><td><select data-email="${esc(u.email)}" aria-label="Rol de ${esc(u.email)}">${roles.map(([v,t])=>`<option value="${v}"${u.rol===v?" selected":""}>${t}</option>`).join("")}</select></td><td>${u.email===S.email?'<span class="muted">tú</span>':`<button class="btn small" data-quitar="${esc(u.email)}">Quitar acceso</button>`}</td></tr>`).join("")}
 async function autorizar(){const email=$("#uEmail").value.trim().toLowerCase(),rol=$("#uRol").value;if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){toast("Escribe un correo válido.");return}
-  const {error}=await Cloud.sb.from("permitidos").upsert({email,rol});toast(error?"No se pudo autorizar: "+error.message:`${email} autorizado como ${rol}. Ya puede ingresar con su correo.`,4500);$("#uEmail").value="";renderUsuarios()}
+  const {error}=await Cloud.sb.from("permitidos").upsert({email,rol});toast(error?"No se pudo autorizar: "+error.message:`${email} autorizado como ${rol}.`,4500);$("#uEmail").value="";renderUsuarios()}
 async function importar(file){const msg=t=>$("#impMsg").textContent=t;
   try{msg("Leyendo archivo…");const j=JSON.parse(await file.text());let n=0;
     const subir=async(rows,ignore)=>{for(let i=0;i<rows.length;i+=15){const {error}=await Cloud.sb.from("docs").upsert(rows.slice(i,i+15),{onConflict:"col,id",ignoreDuplicates:ignore});if(error)throw error;n+=Math.min(15,rows.length-i);msg(`Subiendo… ${n} de ${rows.length}`)}};
@@ -1291,7 +1297,8 @@ async function boot(){
   Cloud.sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
   Cloud.sb.auth.onAuthStateChange((ev,session)=>{if(ev==="SIGNED_IN"&&session)setTimeout(()=>entrar(session),0)});
   const {data:{session}}=await Cloud.sb.auth.getSession();
-  if(session)entrar(session);else showLogin("entrar");
+  let visor=null;try{visor=localStorage.getItem("cc_visor")}catch(e){}
+  if(session)entrar(session);else if(visor)entrarVisor(visor);else showLogin("entrar");
 }
 boot();
 </script>
