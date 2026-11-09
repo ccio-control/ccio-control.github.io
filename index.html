@@ -1084,7 +1084,7 @@ function setView(v){S.view=VIEWS.includes(v)?v:"linea";$("#liveBar").hidden=S.vi
 /* ========== eventos ========== */
 function wire(){
   window.addEventListener("hashchange",()=>setView(location.hash.slice(1)));
-  $("#fFecha").addEventListener("change",e=>{if(e.target.value){S.fecha=e.target.value;S.sel=null;fillDatalists();renderAll()}});
+  $("#fFecha").addEventListener("change",e=>{if(e.target.value){cargarDesde(e.target.value);S.fecha=e.target.value;S.sel=null;fillDatalists();renderAll()}});
   $("#tDia").addEventListener("click",()=>{S.turno="DIA";S.sel=null;renderAll()});
   $("#tNoche").addEventListener("click",()=>{S.turno="NOCHE";S.sel=null;renderAll()});
   $("#bAhora").addEventListener("click",()=>{Object.assign(S,currentShift());S.sel=null;renderAll()});
@@ -1123,6 +1123,7 @@ function wire(){
   $("#bExport").addEventListener("click",()=>{const t=getTurno(keyOf(S.fecha,S.turno));exportCSV(t?[t]:[],`linea_tiempo_${S.fecha}_${S.turno}.csv`)});
   $("#hExport").addEventListener("click",()=>exportCSV(histRange(),`linea_tiempo_${$("#hDesde").value}_a_${$("#hHasta").value}.csv`));
   for(const id of ["#hDesde","#hHasta","#hFam","#hTurno"])$(id).addEventListener("change",renderHistorial);
+  $("#hDesde").addEventListener("change",e=>cargarDesde(e.target.value));
   document.querySelectorAll("dialog [data-close]").forEach(b=>b.addEventListener("click",()=>b.closest("dialog").close()));
   // iniciar guardia
   $("#bIniciar").addEventListener("click",()=>{const t=getTurno(keyOf(S.fecha,S.turno));const prev=prevTurno();$("#iGuardia").value=(t&&t.guardia)||(prev&&prev.guardia)||"A";$("#dlgIniciar").showModal()});
@@ -1168,7 +1169,8 @@ function tick(){const n=new Date();const hm=`${pad(n.getHours())}:${pad(n.getMin
   const h=document.getElementById("pHora");if(h&&isLive()&&!h.dataset.dirty&&document.activeElement!==h)h.value=offToClock(nowOff(),S.turno)}
 
 /* ========== nube (Supabase) ========== */
-const Cloud={sb:null,cache:new Map(),loaded:new Set(),loading:{},listeners:[],subs:0};
+const Cloud={sb:null,cache:new Map(),loaded:new Set(),loading:{},listeners:[],subs:0,since:null,desde:null,nSync:0};
+const maxTs=(a,b)=>!a?b:!b?a:(a>b?a:b);
 const ck=(c,i)=>c+"/"+i;
 function deepMerge(a,b){if(!a||typeof a!=="object"||Array.isArray(a)||!b||typeof b!=="object"||Array.isArray(b))return b;const r={...a};for(const k in b)r[k]=(k in r)?deepMerge(r[k],b[k]):b[k];return r}
 function mapErr(e){const m=(e&&e.message)||"";const perm=!!e&&(e.code==="42501"||/row-level security|permission/i.test(m));return{code:perm?"invalid_argument":"unavailable",message:m}}
@@ -1178,8 +1180,9 @@ function fire(l){try{if(l.id==null){const docs=[];for(const [k,v] of Cloud.cache
 function emit(col){for(const l of Cloud.listeners)if(l.col===col)fire(l)}
 function loadCol(col){if(Cloud.loaded.has(col))return Promise.resolve();if(Cloud.loading[col])return Cloud.loading[col];
   Cloud.loading[col]=(async()=>{let from=0;const step=500;const fresh=new Map();
-    for(;;){const {data,error}=await Cloud.sb.from(Cloud.tabla||"docs").select("id,data").eq("col",col).range(from,from+step-1);if(error)throw mapErr(error);
-      for(const r of data)fresh.set(r.id,r.data);if(data.length<step)break;from+=step}
+    for(;;){let q=Cloud.sb.from(Cloud.tabla||"docs").select("id,data,updated_at").eq("col",col);if(col==="turnos"&&Cloud.desde)q=q.gte("id",Cloud.desde);
+      const {data,error}=await q.order("id").range(from,from+step-1);if(error)throw mapErr(error);
+      for(const r of data){fresh.set(r.id,r.data);Cloud.since=maxTs(Cloud.since,r.updated_at)}if(data.length<step)break;from+=step}
     for(const k of [...Cloud.cache.keys()])if(k.startsWith(col+"/"))Cloud.cache.delete(k);
     for(const [id,d] of fresh)Cloud.cache.set(ck(col,id),d);Cloud.loaded.add(col);delete Cloud.loading[col]})();
   return Cloud.loading[col]}
@@ -1192,11 +1195,22 @@ function makeDb(){
     onSnapshot(cb,err){return listen(col,id,cb,err)}}};
   return{doc,collection:col=>({onSnapshot(cb,err){return listen(col,null,cb,err)}})};
 }
-async function resync(){const cols=[...new Set(Cloud.listeners.map(l=>l.col))];for(const c of cols){Cloud.loaded.delete(c);try{await loadCol(c);emit(c)}catch(e){console.error(e)}}}
+async function resync(){const cols=[...new Set(Cloud.listeners.map(l=>l.col))];if(!cols.length)return;const T=Cloud.tabla||"docs";
+  try{let q=Cloud.sb.from(T).select("col,id,data,updated_at").in("col",cols);if(Cloud.since)q=q.gt("updated_at",Cloud.since);
+    const {data,error}=await q.limit(1000);if(error)throw error;const ch=new Set();
+    for(const r of data){if(r.col==="turnos"&&Cloud.desde&&r.id<Cloud.desde)continue;Cloud.since=maxTs(Cloud.since,r.updated_at);const k=ck(r.col,r.id);if(JSON.stringify(Cloud.cache.get(k))===JSON.stringify(r.data))continue;Cloud.cache.set(k,r.data);Cloud.since=maxTs(Cloud.since,r.updated_at);ch.add(r.col)}
+    if(++Cloud.nSync%10===0){for(const c of cols){let q2=Cloud.sb.from(T).select("id").eq("col",c);if(c==="turnos"&&Cloud.desde)q2=q2.gte("id",Cloud.desde);
+        const {data:ids,error:e2}=await q2.limit(5000);if(e2)continue;const keep=new Set(ids.map(x=>ck(c,x.id)));
+        for(const k of [...Cloud.cache.keys()])if(k.startsWith(c+"/")&&!keep.has(k)){Cloud.cache.delete(k);ch.add(c)}}}
+    for(const c of ch)emit(c);renderSync("ok")}catch(e){console.error(e);renderSync("stale")}}
+async function cargarDesde(fecha){if(!Cloud.desde||!fecha||fecha>=Cloud.desde||!Cloud.sb)return;const hasta=Cloud.desde;Cloud.desde=fecha;
+  try{let from=0;for(;;){const {data,error}=await Cloud.sb.from(Cloud.tabla||"docs").select("id,data").eq("col","turnos").gte("id",fecha).lt("id",hasta).order("id").range(from,from+499);if(error)throw error;
+      for(const r of data)Cloud.cache.set(ck("turnos",r.id),r.data);if(data.length<500)break;from+=500}emit("turnos")}
+  catch(e){console.error(e);Cloud.desde=hasta;toast("No se pudo cargar ese periodo.")}}
 function startRealtime(){
   Cloud.sb.channel("docs-cambios").on("postgres_changes",{event:"*",schema:"public",table:"docs"},p=>{
     if(p.eventType==="DELETE"){const o=p.old||{};if(o.col){Cloud.cache.delete(ck(o.col,o.id));emit(o.col)}return}
-    const r=p.new;if(!r||!r.col)return;Cloud.cache.set(ck(r.col,r.id),r.data);emit(r.col)})
+    const r=p.new;if(!r||!r.col)return;Cloud.cache.set(ck(r.col,r.id),r.data);Cloud.since=maxTs(Cloud.since,r.updated_at);emit(r.col)})
   .subscribe(st=>{if(st==="SUBSCRIBED"){renderSync("ok");if(Cloud.subs++>0)resync()}else if(st==="CHANNEL_ERROR"||st==="TIMED_OUT"||st==="CLOSED")renderSync("stale")});
   setInterval(resync,5*60*1000);
   document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")resync()});
@@ -1234,7 +1248,7 @@ function entrarVisor(email){
   if(S.entrando)return;S.entrando=true;S.visor=true;S.email=email;S.uid=null;
   const ub=$("#userBox");ub.hidden=false;ub.innerHTML=`${esc(email)}<button id="bSalir" title="Salir">Salir</button>`;
   $("#bSalir").onclick=()=>{try{localStorage.removeItem("cc_visor")}catch(e){};location.reload()};
-  $("#login").hidden=true;S.rol="visor";S.canWrite=false;S.canEdit=false;Cloud.tabla="docs_publico";
+  $("#login").hidden=true;S.rol="visor";S.canWrite=false;S.canEdit=false;Cloud.tabla="docs_publico";Cloud.desde=isoDate(new Date(Date.now()-60*864e5));
   cargarDatos(false);
 }
 async function entrar(session){
