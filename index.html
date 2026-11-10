@@ -580,7 +580,9 @@ function insertSeg(segsIn,ns){
   if(prev&&prev.c===ns.c&&prev.l===ns.l&&prev.f===ns.i&&!ns.o&&!ns.k){prev.f=ns.f;segs.splice(ix,1)}
   return segs;
 }
+const LABOR_REFRIGERIO="CX_416"; // labor donde se toma el refrigerio (307)
 function registrar(eq,code,labor,obs,off,causa){
+  if(+code===307)labor=LABOR_REFRIGERIO;
   const k=keyOf(S.fecha,S.turno),t=getTurno(k);
   const cur=(t&&t.eq&&t.eq[eq])||{op:"",s:[]};
   const segs=(cur.s||[]).map(s=>({...s})).sort((a,b)=>a.i-b.i);
@@ -614,7 +616,7 @@ function bulkPlan(code,off){
 function bulkApply(code,off){
   const k=keyOf(S.fecha,S.turno);const t=getTurno(k);const {apply}=bulkPlan(code,off);if(!apply.length)return 0;
   const base=t?JSON.parse(JSON.stringify(t)):{fecha:S.fecha,turno:S.turno,guardia:"",eq:{}};const changes={};
-  for(const a of apply){const cur=base.eq[a.eq]||{op:"",s:[]};const ns={i:off,f:null,c:code,l:a.lab};if(S.uid)ns.by=S.uid;
+  for(const a of apply){const cur=base.eq[a.eq]||{op:"",s:[]};const ns={i:off,f:null,c:code,l:code===307?LABOR_REFRIEGERIO:a.lab};if(S.uid)ns.by=S.uid;
     changes[a.eq]={...cur,s:insertSeg(cur.s,ns)};base.eq[a.eq]=changes[a.eq]}
   base.upd=Date.now();const inDb=!!S.dbT[k];S.dbT[k]=base;afterData();
   if(S.db)enqueue(()=>inDb?S.db.doc("turnos/"+k).update({eq:changes,upd:base.upd}):S.db.doc("turnos/"+k).set(stripLocal(base)));
