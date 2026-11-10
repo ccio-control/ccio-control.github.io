@@ -504,6 +504,8 @@ function renderLabList(){if(!$("#labList"))return;const q=($("#labFilt").value||
   const all=[...new Set([...S.cat.labores,...extra])].filter(l=>!BADLAB(l)).sort((a,b)=>(extra.has(b)-extra.has(a))||a.localeCompare(b)).filter(l=>!q||l.toUpperCase().includes(q));
   $("#labNew").disabled=$("#labAdd").disabled=!S.canWrite;
   $("#labList").innerHTML=all.slice(0,400).map(l=>`<span class="labitem${off.has(l)?" off":""}${extra.has(l)?" new":""}" title="${extra.has(l)?"Agregada en la página":"Del historial"}">${esc(l)}${S.canWrite?(off.has(l)?`<button data-show="${esc(l)}" aria-label="Restaurar ${esc(l)}">restaurar</button>`:`<button data-hide="${esc(l)}" aria-label="Ocultar ${esc(l)}">✕</button>`):""}</span>`).join("")+(all.length>400?`<span class="muted">…y ${all.length-400} más; usa el buscador.</span>`:"")}
+const CODIGO_SIN_REPORTE=500;
+function codesReg(fam){const a=S.cat.act[fam]||S.cat.act.SCOOP||{};const cs=codesFor(fam);if(a[CODIGO_SIN_REPORTE])cs.push(CODIGO_SIN_REPORTE);return cs}
 function codesFor(fam){const a=S.cat.act[fam]||S.cat.act.SCOOP||{};return Object.keys(a).map(Number).filter(c=>c<500).sort((x,y)=>x-y)}
 
 /* ========== datos de turnos ========== */
@@ -828,7 +830,7 @@ function defaultProd(fam){ // la actividad productiva más usada por la familia
 }
 function renderChips(){
   const fam=famOf(S.sel);const q=($("#pFilt")?.value||"").toLowerCase().trim();
-  const codes=codesFor(fam);const groups=[["Operación",c=>c<200],["Demora operativa",c=>c>=400],["Demora no operativa",c=>c>=300&&c<400],["Mantenimiento / no disponible",c=>c>=200&&c<300]];
+  const codes=codesReg(fam);const groups=[["Operación",c=>c<200],["Demora operativa",c=>c>=400&&c<500],["Demora no operativa",c=>c>=300&&c<400],["Mantenimiento / no disponible",c=>c>=200&&c<300],["Sin reporte",c=>c>=500]];
   let h="";for(const [n,fn] of groups){const cs=codes.filter(fn).filter(c=>!q||String(c).includes(q)||actInfo(fam,c).name.toLowerCase().includes(q));
     if(!cs.length)continue;h+=`<div class="chipgroup" style="width:100%">${n}</div>`;
     for(const c of cs){const g=groupOf(c,fam);h+=`<button class="chip" data-c="${c}" aria-pressed="${S.pick===c}" style="border-left-color:${colorOf(g)}">${c} ${esc(actInfo(fam,c).name)}</button>`}}
@@ -995,7 +997,7 @@ function renderRapido(){
   }
 }
 function parseAct(txt,fam){txt=String(txt||"").trim();if(!txt)return null;const m=txt.match(/^(\d{3})/);if(m)return +m[1];
-  const q=txt.toLowerCase();const c=codesFor(fam).find(c=>actInfo(fam,c).name.toLowerCase().includes(q));return c??null}
+  const q=txt.toLowerCase();const c=codesReg(fam).find(c=>actInfo(fam,c).name.toLowerCase().includes(q));return c??null}
 function rpSave(tr){
   const eq=tr.dataset.eq,fam=tr.dataset.fam;const hEl=tr.querySelector(".rp-h"),aEl=tr.querySelector(".rp-a");
   const off=parseHora(hEl.value);if(off===null){toast(`${eq}: escribe la hora (ej. 0745).`);hEl.focus();return}
