@@ -201,7 +201,7 @@ svg text{fill:var(--muted);font-family:var(--font-mono);font-size:10px}
 .kpi .ksub{font-size:10.5px;color:var(--muted);margin-top:2px;line-height:1.2}
 .kpi .ksub b{color:var(--ink)}
 .kpi[data-pop]{cursor:help}
-#kpiPop{position:fixed;z-index:60;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:10px 12px;max-height:62vh;overflow:auto;min-width:300px;max-width:520px;font-size:12px}
+#kpiPop{position:fixed;z-index:60;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:10px 12px;max-height:62vh;overflow:auto;min-width:300px;max-width:min(680px,96vw);font-size:12px}
 #kpiPop h4{margin:4px 0 6px;font-size:12px}
 #kpiPop h4+table{margin-bottom:8px}
 #kpiPop .ptab{border-collapse:collapse;width:100%}
@@ -210,6 +210,9 @@ svg text{fill:var(--muted);font-family:var(--font-mono);font-size:10px}
 #kpiPop .ptab .n{text-align:right;font-family:var(--font-mono)}
 #kpiPop .ptab tfoot td{font-weight:700;border-bottom:0}
 #kpiPop .pnote{margin:6px 0 0;font-size:10.5px;color:var(--muted);white-space:normal}
+#kpiPop .ptab tr.sub td{font-weight:700;border-top:1px solid var(--muted)}
+#kpiPop .ptab tr.bjrow td{color:var(--muted)}
+.bj{display:inline-block;font-size:9px;font-weight:700;padding:0 4px;border-radius:3px;background:#f1e3c8;color:#7a5200;vertical-align:1px}
 .kpi.kmtto .mrow.mh b,.kpi.kmtto .mrow.mh em{letter-spacing:0;text-transform:none;font-size:10px}
 #liveBar .strip{min-width:0}
 #liveBar .acard{flex-basis:220px}
@@ -719,78 +722,88 @@ function shiftStats(t){
   return{st,opNow,delNow,mtNow,sbNow,sinReg,alerts,n:eqs.length,mt};
 }
 /* ---- Indicadores técnicos (tarjetas + detalle al pasar el mouse) ----
-   Definiciones (ajústalas si tu mina usa otras):
-   Efectivas    = Productiva (P)
-   No efectivas = Traslado/sin producción (S) + Demora operativa (D) + Demora no operativa (N)
-   Operativas   = Efectivas + No efectivas
-   Reserva      = Stand by (B)
-   Inoperativas = Mantenimiento correctivo + preventivo (M)
-   Sin reporte (500) no entra en ningún cálculo.
-   Disponibilidad = (Operativas + Reserva) / (Operativas + Reserva + Inoperativas)
-   Utilización    = Operativas / (Operativas + Reserva)                                     */
+   Mismas fórmulas que las tablas dinámicas de los Excel BD_*_2027:
+   HORAS            = horas registradas (sin contar 500 sin reporte)
+   HRS OPERATIVAS   = códigos 1xx (actividades operativas)
+   HRS EFECTIVAS    = 1xx de tiempo efectivo
+   HRS MTTO         = 2xx "horas no disponibles" (204 inspección rutinaria NO cuenta)
+   Hrs Mtto Correctivo y #FALLA = solo código 202
+   DM%   = (HORAS − HRS MTTO) / HORAS
+   UTIL% = HRS OPERATIVAS / (HORAS − HRS MTTO)
+   MTBF  = (HORAS − Hrs Mtto Correctivo) / (#FALLA + 1)      MTTR = HRS MTTO / #FALLA
+   Util% Flota = HRS OPERATIVAS / MIN(equipos × horas − HRS MTTO ; equipos con operador × horas)  */
+const KPI_MTTO_NO_CUENTA=new Set([204]);          // 2xx que no son horas no disponibles
+const KPI_CONTRATA=new Set(["ROBOT","MIXER"]);    // flotas de BJ: se suman aparte
+const KPI_CON_OPERADOR={SCOOP:5.5,JUMBO:3,SIMBA:2,EMPERNADOR:3,DESATADOR:2,UTILITARIO:2}; // tope del Util% Flota (de los Excel: 132/24, 72/24, 48/24…)
+function kpiAcc(){return{n:0,opero:0,excEq:0,excN:0,horas:0,oper:0,efe:0,mtto:0,corr202:0,fallas:0,B:0,prev:0,corr:0,nowP:0,nowB:0,nowM:0,nom:0}}
+function kpiFin(a,fam){a.dm=a.horas?(a.horas-a.mtto)/a.horas:null;const disp=a.horas-a.mtto;a.util=disp>0?a.oper/disp:null;
+  a.mtbf=a.horas?(a.horas-a.corr202)/(a.fallas+1):null;a.mttr=a.fallas?a.mtto/a.fallas:null;
+  const cap=fam&&KPI_CON_OPERADOR[fam];a.utilFlota=cap&&a.nom?a.oper/Math.min(a.nom-a.mtto,cap*a.nom/a.n):null;return a}
 function flotaStats(t){
-  const live=isLive(),no=nowOff();const E=[],F={};
-  const T={n:0,conReg:0,opero:0,excEq:0,excN:0,P:0,S:0,D:0,N:0,B:0,M:0,X:0,prev:0,corr:0,nowP:0,nowB:0,nowM:0};
+  const live=isLive(),no=nowOff(),H=live?Math.max(no,0):SHIFT_LEN;const E=[],F={};const P=kpiAcc(),C=kpiAcc();
   for(const e of allEquipos().filter(x=>!S.fam||x.fam===S.fam)){
-    const segs=(t&&t.eq&&t.eq[e.eq]&&t.eq[e.eq].s)||[];
-    const r={eq:e.eq,fam:e.fam,P:0,S:0,D:0,N:0,B:0,M:0,X:0,prev:0,corr:0,exc:[],now:null};
-    for(const s of segs){if(live&&s.i>no)continue;const m=segEnd(s,live,no)-s.i;if(m<=0)continue;
-      const g=groupOf(s.c,e.fam);r[g]+=m;const tp=mttoTipo(s.c,e.fam);if(tp)r[tp]+=m;
-      if(g!=="X"&&+s.c!==410&&!(g==="M"&&s.i===0)){const sd=stdFor(e.eq,e.fam,s.c);if(sd&&m>sd)r.exc.push({c:s.c,m,sd,i:s.i})}}
+    const segs=(t&&t.eq&&t.eq[e.eq]&&t.eq[e.eq].s)||[];const r=kpiAcc();r.eq=e.eq;r.fam=e.fam;r.exc=[];r.n=1;r.nom=H;r.now=null;
+    for(const s of segs){if(live&&s.i>no)continue;const m=segEnd(s,live,no)-s.i;if(m<=0)continue;const c=+s.c,g=groupOf(c,e.fam);
+      if(g==="X")continue;r.horas+=m;
+      if(c>=100&&c<200){r.oper+=m;if(g==="P")r.efe+=m}
+      if(c>=200&&c<300&&!KPI_MTTO_NO_CUENTA.has(c))r.mtto+=m;
+      if(c===202){r.corr202+=m;r.fallas++}
+      if(g==="B")r.B+=m;const tp=mttoTipo(c,e.fam);if(tp)r[tp]+=m;
+      if(c!==410&&!(g==="M"&&s.i===0)){const sd=stdFor(e.eq,e.fam,c);if(sd&&m>sd)r.exc.push({c,m,sd,i:s.i})}}
     const last=curSeg(segs);if(last&&(isOngoing(last)||!live))r.now=groupOf(last.c,e.fam);
-    r.efe=r.P;r.noef=r.S+r.D+r.N;r.oper=r.efe+r.noef;r.disponible=r.oper+r.B;r.base=r.disponible+r.M;
-    r.disp=r.base?r.disponible/r.base:null;r.util=r.disponible?r.oper/r.disponible:null;
-    E.push(r);const f=F[e.fam]||(F[e.fam]={fam:e.fam,n:0,conReg:0,opero:0,excEq:0,excN:0,P:0,S:0,D:0,N:0,B:0,M:0,X:0,prev:0,corr:0,nowP:0,nowB:0,nowM:0});
-    for(const a of [f,T]){a.n++;if(segs.length)a.conReg++;if(r.P>0)a.opero++;if(r.exc.length){a.excEq++;a.excN+=r.exc.length}
-      for(const g of ["P","S","D","N","B","M","X","prev","corr"])a[g]+=r[g];
-      if(r.now==="P"||r.now==="S")a.nowP++;else if(r.now==="B")a.nowB++;else if(r.now==="M")a.nowM++}}
-  for(const a of [T,...Object.values(F)]){a.efe=a.P;a.noef=a.S+a.D+a.N;a.oper=a.efe+a.noef;a.disponible=a.oper+a.B;a.base=a.disponible+a.M;
-    a.disp=a.base?a.disponible/a.base:null;a.util=a.disponible?a.oper/a.disponible:null}
-  return{E,F,T};
+    r.opero=r.efe>0?1:0;r.excEq=r.exc.length?1:0;r.excN=r.exc.length;r.nowP=(r.now==="P"||r.now==="S")?1:0;r.nowB=r.now==="B"?1:0;r.nowM=r.now==="M"?1:0;
+    kpiFin(r);E.push(r);const f=F[e.fam]||(F[e.fam]=Object.assign(kpiAcc(),{fam:e.fam,bj:KPI_CONTRATA.has(e.fam)}));
+    for(const a of [f,f.bj?C:P])for(const k of Object.keys(kpiAcc()))a[k]+=r[k]}
+  for(const f of Object.values(F))kpiFin(f,f.fam);kpiFin(P);kpiFin(C);
+  return{E,F,P,C,bj:[...KPI_CONTRATA].some(x=>F[x])};
 }
 const hh=m=>(m/60).toLocaleString("es-PE",{minimumFractionDigits:1,maximumFractionDigits:1})+" h";
 const pc=x=>x==null?"–":Math.round(100*x)+"%";
 function renderKpis(){
-  const t=getTurno(keyOf(S.fecha,S.turno));const k=shiftStats(t);const live=isLive();const fs=flotaStats(t),T=fs.T;S.kpiFS=fs;
-  const eff=k.st.tot?Math.round(100*k.st.P/k.st.tot):0;
+  const t=getTurno(keyOf(S.fecha,S.turno));const k=shiftStats(t);const live=isLive();const fs=flotaStats(t),T=fs.P;S.kpiFS=fs;
+  const eff=k.st.tot?Math.round(100*k.st.P/k.st.tot):0;const nBJ=fs.bj?" <span class=\"bj\">sin BJ</span>":"";
   const card=(c,v,l,sub,pop)=>`<div class="kpi k-${c}" data-pop="${pop}"><div class="v">${v}</div><div class="l">${l}</div><div class="ksub">${sub}</div></div>`;
   $("#kpis").innerHTML=[
-    card("P",k.opNow,live?"Operando ahora":"Operando al cierre",`Operaron <b>${T.opero}</b> de ${T.n}`,"op"),
-    card("B",k.sbNow,"Stand by",`En el turno: <b>${hh(T.B)}</b>`,"sb"),
-    kpiMtto(k.mt,live,T),
-    card("P",eff+"%","Tiempo productivo",`Utilización est. <b>${pc(T.util)}</b>`,"pr"),
-    card("A",k.alerts,live?"Exceden estándar ahora":"Exceden estándar",`En el turno: <b>${T.excEq}</b> equipos`,"ex")
+    card("P",k.opNow,live?"Operando ahora":"Operando al cierre",`Operaron <b>${fs.P.opero+fs.C.opero}</b> de ${fs.P.n+fs.C.n}`,"op"),
+    card("B",k.sbNow,"Stand by",`En el turno: <b>${hh(fs.P.B+fs.C.B)}</b>`,"sb"),
+    kpiMtto(k.mt,live,T,nBJ),
+    card("P",eff+"%","Tiempo productivo",`UTIL% est. <b>${pc(T.util)}</b>${nBJ}`,"pr"),
+    card("A",k.alerts,live?"Exceden estándar ahora":"Exceden estándar",`En el turno: <b>${fs.P.excEq+fs.C.excEq}</b> equipos`,"ex")
   ].join("");
   kpiPopInit();
 }
-function kpiMtto(mt,live,T){
+function kpiMtto(mt,live,T,nBJ){
   const fila=(tp,n,col)=>{const x=mt[tp];return`<div class="mrow"><i style="background:var(${col})"></i><span>${n}</span><b>${x.vivo}</b><em>${x.n}</em></div>`};
-  return`<div class="kpi kmtto" data-pop="mt"><div class="mrow mh"><i></i><span>Mtto.</span><b>${live?"ahora":"cierre"}</b><em>turno</em></div>${fila("corr","Correctivo","--c-MC")}${fila("prev","Preventivo","--c-M")}<div class="ksub">Disp. est. <b>${pc(T.disp)}</b> · ${hh(T.M)} inop.</div></div>`;
+  return`<div class="kpi kmtto" data-pop="mt"><div class="mrow mh"><i></i><span>Mtto.</span><b>${live?"ahora":"cierre"}</b><em>turno</em></div>${fila("corr","Correctivo","--c-MC")}${fila("prev","Preventivo","--c-M")}<div class="ksub">DM% est. <b>${pc(T.dm)}</b>${nBJ} · ${hh(T.mtto)}</div></div>`;
 }
 /* ventana de detalle */
-function kpiTabla(cols,filas,total){
-  return`<table class="ptab"><thead><tr>${cols.map((c,i)=>`<th${i?' class="n"':""}>${c}</th>`).join("")}</tr></thead><tbody>${filas.map(f=>`<tr>${f.map((v,i)=>`<td${i?' class="n"':""}>${v}</td>`).join("")}</tr>`).join("")}</tbody>${total?`<tfoot><tr>${total.map((v,i)=>`<td${i?' class="n"':""}>${v}</td>`).join("")}</tr></tfoot>`:""}</table>`}
+function kpiTabla(cols,filas){
+  return`<table class="ptab"><thead><tr>${cols.map((c,i)=>`<th${i?' class="n"':""}>${c}</th>`).join("")}</tr></thead><tbody>${filas.map(f=>`<tr${f.cls?` class="${f.cls}"`:""}>${f.map((v,i)=>`<td${i?' class="n"':""}>${v}</td>`).join("")}</tr>`).join("")}</tbody></table>`}
+function kpiFilasFlota(fs,fn){ // flotas propias → subtotal → flotas BJ → subtotal BJ
+  const fams=Object.values(fs.F),own=fams.filter(f=>!f.bj),bj=fams.filter(f=>f.bj);const sub=(lab,a)=>Object.assign(fn(lab,a),{cls:"sub"});
+  const rows=own.map(f=>fn(esc(f.fam),f));if(own.length)rows.push(sub("Total Trafigura",fs.P));
+  if(bj.length){rows.push(...bj.map(f=>Object.assign(fn(esc(f.fam)+' <span class="bj">BJ</span>',f),{cls:"bjrow"})));rows.push(sub("Total BJ (contrata)",fs.C))}
+  return rows}
+const kpiN=(x,d=1)=>x==null?"–":x.toLocaleString("es-PE",{minimumFractionDigits:d,maximumFractionDigits:d});
 function kpiPopHTML(key){
-  const fs=S.kpiFS;if(!fs)return"";const T=fs.T,fams=Object.values(fs.F),live=isLive();
-  const conReg=fs.E.filter(r=>r.base>0);
-  if(key==="op")return`<h4>Equipos que operaron (con tiempo productivo)</h4>`+kpiTabla(["Flota","Equipos","Operaron","Operando "+(live?"ahora":"al cierre")],
-      fams.map(f=>[esc(f.fam),f.n,f.opero,f.nowP]),["Total",T.n,T.opero,T.nowP]);
+  const fs=S.kpiFS;if(!fs)return"";const live=isLive();const conReg=fs.E.filter(r=>r.horas>0);const tag=r=>KPI_CONTRATA.has(r.fam)?' <span class="bj">BJ</span>':"";
+  if(key==="op")return`<h4>Equipos que operaron (con horas efectivas)</h4>`+kpiTabla(["Flota","Equipos","Operaron","Operando "+(live?"ahora":"al cierre")],
+      kpiFilasFlota(fs,(l,a)=>[l,a.n,a.opero,a.nowP]));
   if(key==="sb")return`<h4>Stand by por flota</h4>`+kpiTabla(["Flota","En stand by "+(live?"ahora":"al cierre"),"Horas stand by"],
-      fams.map(f=>[esc(f.fam),f.nowB,hh(f.B)]),["Total",T.nowB,hh(T.B)]);
-  if(key==="pr")return`<h4>Horas operativas y utilización estimada</h4>`+kpiTabla(["Flota","Efectivas","No efectivas","Operativas","Utiliz."],
-      fams.map(f=>[esc(f.fam),hh(f.efe),hh(f.noef),hh(f.oper),pc(f.util)]),["Total",hh(T.efe),hh(T.noef),hh(T.oper),pc(T.util)])+
-    `<h4>Por equipo</h4>`+kpiTabla(["Equipo","Efectivas","No efectivas","Operativas","Utiliz."],
-      conReg.sort((a,b)=>(a.util??2)-(b.util??2)).map(r=>[esc(r.eq),hh(r.efe),hh(r.noef),hh(r.oper),pc(r.util)]))+
-    `<p class="pnote">Operativas = efectivas + no efectivas (traslado y demoras). Utilización = operativas ÷ (operativas + stand by). No incluye mantenimiento ni sin reporte.</p>`;
-  if(key==="mt")return`<h4>Horas inoperativas y disponibilidad estimada</h4>`+kpiTabla(["Flota","Correctivo","Preventivo","Inoperativas","Disp."],
-      fams.map(f=>[esc(f.fam),hh(f.corr),hh(f.prev),hh(f.M),pc(f.disp)]),["Total",hh(T.corr),hh(T.prev),hh(T.M),pc(T.disp)])+
-    `<h4>Por equipo</h4>`+(conReg.some(r=>r.M>0)?kpiTabla(["Equipo","Correctivo","Preventivo","Inoperativas","Disp."],
-      conReg.filter(r=>r.M>0).sort((a,b)=>(a.disp??2)-(b.disp??2)).map(r=>[esc(r.eq),hh(r.corr),hh(r.prev),hh(r.M),pc(r.disp)])):"")+
-    `<p class="pnote">${conReg.filter(r=>!(r.M>0)).length} equipos más con registro: 100% disponibles.</p>`+
-    `<p class="pnote">Disponibilidad = (horas registradas − inoperativas) ÷ horas registradas. No incluye sin reporte.</p>`;
+      kpiFilasFlota(fs,(l,a)=>[l,a.nowB,hh(a.B)]));
+  if(key==="pr")return`<h4>Utilización estimada del turno</h4>`+kpiTabla(["Flota","HORAS","HRS efectivas","HRS operativas","UTIL%","Util% flota"],
+      kpiFilasFlota(fs,(l,a)=>[l,hh(a.horas),hh(a.efe),hh(a.oper),pc(a.util),pc(a.utilFlota)]))+
+    `<h4>Por equipo</h4>`+kpiTabla(["Equipo","HORAS","HRS efectivas","HRS operativas","UTIL%"],
+      conReg.sort((a,b)=>(a.util??2)-(b.util??2)).map(r=>[esc(r.eq)+tag(r),hh(r.horas),hh(r.efe),hh(r.oper),pc(r.util)]))+
+    `<p class="pnote">UTIL% = HRS operativas (1xx) ÷ (HORAS − HRS mtto). Util% flota = HRS operativas ÷ mín(equipos × horas − HRS mtto ; equipos con operador × horas). Las demoras no son horas operativas. Sin reporte no cuenta.</p>`;
+  if(key==="mt")return`<h4>Disponibilidad mecánica estimada del turno</h4>`+kpiTabla(["Flota","HORAS","HRS mtto","Correct. 202","#Fallas","DM%","MTBF","MTTR"],
+      kpiFilasFlota(fs,(l,a)=>[l,hh(a.horas),hh(a.mtto),hh(a.corr202),a.fallas,pc(a.dm),a.mtbf==null?"–":kpiN(a.mtbf/60)+" h",a.mttr==null?"–":kpiN(a.mttr/60)+" h"]))+
+    `<h4>Por equipo</h4>`+(conReg.some(r=>r.mtto>0)?kpiTabla(["Equipo","HRS mtto","Correct. 202","#Fallas","DM%"],
+      conReg.filter(r=>r.mtto>0).sort((a,b)=>(a.dm??2)-(b.dm??2)).map(r=>[esc(r.eq)+tag(r),hh(r.mtto),hh(r.corr202),r.fallas,pc(r.dm)])):"")+
+    `<p class="pnote">${conReg.filter(r=>!(r.mtto>0)).length} equipos más con registro: DM 100%.</p>`+
+    `<p class="pnote">DM% = (HORAS − HRS mtto) ÷ HORAS. HRS mtto = 2xx menos 204. MTBF = (HORAS − correctivo 202) ÷ (#fallas + 1). MTTR = HRS mtto ÷ #fallas. Valores del turno, no del mes.</p>`;
   if(key==="ex"){const ev=fs.E.flatMap(r=>r.exc.map(x=>({...x,eq:r.eq,fam:r.fam}))).sort((a,b)=>(b.m-b.sd)-(a.m-a.sd));
-    return`<h4>Equipos que excedieron el estándar en el turno</h4>`+kpiTabla(["Flota","Equipos","Veces"],
-      fams.map(f=>[esc(f.fam),f.excEq,f.excN]),["Total",T.excEq,T.excN])+
+    return`<h4>Equipos que excedieron el estándar en el turno</h4>`+kpiTabla(["Flota","Equipos","Veces"],kpiFilasFlota(fs,(l,a)=>[l,a.excEq,a.excN]))+
     (ev.length?`<h4>Detalle</h4>`+kpiTabla(["Equipo · actividad","Duró","Estándar","Exceso"],
       ev.slice(0,40).map(x=>[`${esc(x.eq)} · ${x.c} ${esc(actInfo(x.fam,x.c).name)}`,fmtDur(x.m),fmtDur(x.sd),"+"+fmtDur(x.m-x.sd)])):"")}
   return"";
