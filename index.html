@@ -782,7 +782,7 @@ function kpiTabla(cols,filas){
 function kpiFilasFlota(fs,fn){ // flotas propias → subtotal → flotas BJ → subtotal BJ
   const fams=Object.values(fs.F),own=fams.filter(f=>!f.bj),bj=fams.filter(f=>f.bj);const sub=(lab,a)=>Object.assign(fn(lab,a),{cls:"sub"});
   const rows=own.map(f=>fn(esc(f.fam),f));if(own.length)rows.push(sub("Total Trafigura",fs.P));
-  if(bj.length){rows.push(...bj.map(f=>Object.assign(fn(esc(f.fam)+' <span class="bj">BJ</span>',f),{cls:"bjrow"})));rows.push(sub("Total BJ (contrata)",fs.C))}
+  if(bj.length){rows.push(...bj.map(f=>Object.assign(fn(esc(f.fam)+' <span class="bj">BJ</span>',f),{cls:"bjrow"})));rows.push(sub("Total BJ",fs.C))}
   return rows}
 const kpiN=(x,d=1)=>x==null?"–":x.toLocaleString("es-PE",{minimumFractionDigits:d,maximumFractionDigits:d});
 function kpiPopHTML(key){
