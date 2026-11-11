@@ -36,6 +36,8 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:
 .brand{display:flex;flex-direction:column}
 .brand b{font-size:17px;letter-spacing:.02em}
 .brand span{font-size:12px;color:var(--muted)}
+.top .logo{height:32px;width:auto;flex:none;margin-right:-8px}
+.top.compact .logo{height:24px}
 .shift{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .shift input,.shift select{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
 .seg-toggle{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
@@ -265,7 +267,7 @@ const SUPABASE_KEY = "sb_publishable_KHGJNfT17DqkebBZtkkWLQ_KM-SdBPB";
 </script>
 <div id="login" hidden><div class="login-card" id="loginCard"></div></div>
 <header class="top">
-  <div class="brand"><b>Centro de Control · Línea de Tiempo</b><span>Equipos, labores y desvíos operativos</span></div>
+  <img class="logo" src="logo.png" alt="Catalina Huanca"><div class="brand"><b>Centro de Control · Línea de Tiempo</b><span>Equipos, labores y desvíos operativos</span></div>
   <div class="shift">
     <input type="date" id="fFecha" aria-label="Fecha del turno">
     <div class="seg-toggle" role="group" aria-label="Turno">
